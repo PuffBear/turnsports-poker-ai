@@ -10,10 +10,23 @@ class CFRAgent:
     Converges to Nash equilibrium through self-play.
     """
     
-    def __init__(self):
+    def __init__(self, card_abstraction=None, action_abstraction=None, num_actions=9):
+        """
+        Initialize CFR agent.
+        
+        Args:
+            card_abstraction: Optional CardAbstraction instance for state bucketing
+            action_abstraction: Optional ActionAbstraction instance for action simplification
+            num_actions: Number of actions in the game (9 for full Hold'em, 5 for abstracted)
+        """
+        # Abstraction modules
+        self.card_abstraction = card_abstraction
+        self.action_abstraction = action_abstraction
+        self.num_actions = num_actions
+        
         # Strategy tables
-        self.regret_sum = defaultdict(lambda: np.zeros(9))  # Cumulative regrets
-        self.strategy_sum = defaultdict(lambda: np.zeros(9))  # Cumulative strategy
+        self.regret_sum = defaultdict(lambda: np.zeros(num_actions))  # Cumulative regrets
+        self.strategy_sum = defaultdict(lambda: np.zeros(num_actions))  # Cumulative strategy
         self.iterations = 0
     
     def get_strategy(self, info_set, legal_actions):
@@ -28,13 +41,24 @@ class CFRAgent:
             strategy: Probability distribution over actions
         """
         regrets = self.regret_sum[info_set]
-        strategy = np.zeros(9)
+        strategy = np.zeros(self.num_actions)
+        
+        # Map legal actions if using action abstraction
+        if self.action_abstraction:
+            # Simple static mapping: 9 env actions -> 5 abstract actions
+            # 0:fold->0, 1:check/call->1, 2-4:small bet->2, 5-8:large bet->3/4
+            env_to_abstract = {0: 0, 1: 1, 2: 2, 3: 2, 4: 2, 5: 3, 6: 3, 7: 4, 8: 4}
+            abstract_legal = set()
+            for env_action in legal_actions:
+                if env_action in env_to_abstract:
+                    abstract_legal.add(env_to_abstract[env_action])
+            legal_actions = list(abstract_legal)
         
         # Regret matching: positive regrets become probabilities
         positive_regrets = np.maximum(regrets, 0)
         
         # Only consider legal actions
-        for i in range(9):
+        for i in range(self.num_actions):
             if i not in legal_actions:
                 positive_regrets[i] = 0
         
@@ -54,8 +78,17 @@ class CFRAgent:
         """Sample action from current strategy."""
         strategy = self.get_strategy(info_set, legal_actions)
         
-        # Sample from strategy
-        return np.random.choice(9, p=strategy)
+        # Sample from strategy (returns abstract action if using abstraction)
+        abstract_action = np.random.choice(self.num_actions, p=strategy)
+        
+        # Map back to environment action if using action abstraction
+        if self.action_abstraction:
+            # Simple reverse mapping: abstract -> env action
+            # 0->0 (fold), 1->1 (call), 2->4 (1/3 pot), 3->6 (3/4 pot), 4->7 (pot)
+            abstract_to_env = {0: 0, 1: 1, 2: 4, 3: 6, 4: 7}
+            if abstract_action in abstract_to_env:
+                return abstract_to_env[abstract_action]
+        return abstract_action
     
     def get_average_strategy(self, info_set, legal_actions):
         """
@@ -64,8 +97,18 @@ class CFRAgent:
         """
         avg_strategy = self.strategy_sum[info_set].copy()
         
+        # Map legal actions if using action abstraction
+        if self.action_abstraction:
+            # Same static mapping as in get_strategy
+            env_to_abstract = {0: 0, 1: 1, 2: 2, 3: 2, 4: 2, 5: 3, 6: 3, 7: 4, 8: 4}
+            abstract_legal = set()
+            for env_action in legal_actions:
+                if env_action in env_to_abstract:
+                    abstract_legal.add(env_to_abstract[env_action])
+            legal_actions = list(abstract_legal)
+        
         # Zero out illegal actions
-        for i in range(9):
+        for i in range(self.num_actions):
             if i not in legal_actions:
                 avg_strategy[i] = 0
         
@@ -145,17 +188,36 @@ class CFRAgent:
             # Save environment state
             saved_state = self._save_env_state(env)
             
-            action_utilities = np.zeros(9)
+            action_utilities = np.zeros(self.num_actions)
             
-            for action in legal_actions:
+            # Get abstract legal actions if using abstraction
+            if self.action_abstraction:
+                env_to_abstract = {0: 0, 1: 1, 2: 2, 3: 2, 4: 2, 5: 3, 6: 3, 7: 4, 8: 4}
+                abstract_to_env = {0: 0, 1: 1, 2: 4, 3: 6, 4: 7}
+                abstract_legal = set()
+                for env_action in legal_actions:
+                    if env_action in env_to_abstract:
+                        abstract_legal.add(env_to_abstract[env_action])
+                actions_to_try = list(abstract_legal)
+            else:
+                actions_to_try = legal_actions
+                abstract_to_env = None
+            
+            for abstract_action in actions_to_try:
                 # Restore state
                 self._restore_env_state(env, saved_state)
                 
+                # Map to env action if needed
+                if self.action_abstraction and abstract_to_env:
+                    env_action = abstract_to_env.get(abstract_action, abstract_action)
+                else:
+                    env_action = abstract_action
+                
                 # Take action
-                next_state, reward, done, truncated, info_dict = env.step(action)
+                next_state, reward, done, truncated, info_dict = env.step(env_action)
                 
                 # Recurse
-                action_utilities[action] = self._external_sampling_cfr(env, player_idx)
+                action_utilities[abstract_action] = self._external_sampling_cfr(env, player_idx)
             
             # Expected utility
             utility = np.sum(strategy * action_utilities)
@@ -173,10 +235,20 @@ class CFRAgent:
             return utility
         else:
             # Opponent: sample according to strategy
-            sampled_action = np.random.choice(9, p=strategy)
+            sampled_action = np.random.choice(self.num_actions, p=strategy)
+            
+            # Map to environment action if using abstraction
+            if self.action_abstraction:
+                abstract_to_env = {0: 0, 1: 1, 2: 4, 3: 6, 4: 7}
+                if sampled_action in abstract_to_env:
+                    env_action = abstract_to_env[sampled_action]
+                else:
+                    env_action = sampled_action
+            else:
+                env_action = sampled_action
             
             # Take sampled action
-            next_state, reward, done, truncated, info_dict = env.step(sampled_action)
+            next_state, reward, done, truncated, info_dict = env.step(env_action)
             
             # Recurse
             return self._external_sampling_cfr(env, player_idx)
@@ -192,12 +264,9 @@ class CFRAgent:
             'pot': env.pot,
             'stacks': list(env.stacks),
             'street_investment': list(env.street_investment),
-            'total_investment': list(env.total_investment),
             'street': env.street,
             'current_player': env.current_player,
-            'last_aggressor': env.last_aggressor,
             'done': env.done,
-            'num_actions_this_street': env.num_actions_this_street,
             'has_acted': list(env.has_acted)
         }
     
@@ -209,33 +278,54 @@ class CFRAgent:
         env.pot = state['pot']
         env.stacks = list(state['stacks'])
         env.street_investment = list(state['street_investment'])
-        env.total_investment = list(state['total_investment'])
         env.street = state['street']
         env.current_player = state['current_player']
-        env.last_aggressor = state['last_aggressor']
         env.done = state['done']
-        env.num_actions_this_street = state['num_actions_this_street']
         env.has_acted = list(state['has_acted'])
     
     def _get_info_set(self, env, player):
         """
         Create information set string from game state.
         Only includes information visible to the player.
+        
+        If card_abstraction is enabled, uses buckets instead of raw cards.
         """
-        # Get player's cards
-        hand = env.hands[player]
-        hand_str = ''.join(sorted([str(c) for c in hand]))
+        # Determine street name
+        street_names = ['preflop', 'flop', 'turn', 'river']
+        street_name = street_names[env.street] if env.street < len(street_names) else 'river'
         
-        # Get board
-        board_str = ''.join([str(c) for c in env.board])
-        
-        # Get betting history (simplified)
-        street = env.street
-        pot = int(env.pot)
-        to_call = int(abs(env.street_investment[0] - env.street_investment[1]))
-        
-        # Create info set string
-        info_set = f"{hand_str}|{board_str}|{street}|{pot}|{to_call}"
+        if self.card_abstraction:
+            # Use abstraction: bucket instead of raw cards
+            hand = env.hands[player]
+            board = env.board
+            
+            # Convert Card objects to strings
+            hand_strs = [str(c) for c in hand]
+            board_strs = [str(c) for c in board]
+            
+            # Get abstract bucket
+            bucket = self.card_abstraction.get_bucket(hand_strs, board_strs, street_name)
+            
+            # Simplified info set with bucket
+            pot = int(env.pot)
+            to_call = int(abs(env.street_investment[0] - env.street_investment[1]))
+            
+            info_set = f"{bucket}|{street_name}|{pot}|{to_call}"
+        else:
+            # Original: use raw card strings
+            hand = env.hands[player]
+            hand_str = ''.join(sorted([str(c) for c in hand]))
+            
+            # Get board
+            board_str = ''.join([str(c) for c in env.board])
+            
+            # Get betting history (simplified)
+            street = env.street
+            pot = int(env.pot)
+            to_call = int(abs(env.street_investment[0] - env.street_investment[1]))
+            
+            # Create info set string
+            info_set = f"{hand_str}|{board_str}|{street}|{pot}|{to_call}"
         
         return info_set
     
