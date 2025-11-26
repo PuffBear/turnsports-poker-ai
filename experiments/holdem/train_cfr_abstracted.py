@@ -32,7 +32,7 @@ from src.poker.envs.holdem_hu_env import HoldemHuEnv
 
 
 def train_abstracted_cfr(
-    n_iterations: int = 10000,
+    n_iterations: int = 50000,
     save_interval: int = 1000,
     eval_interval: int = 100,
     checkpoint_dir: str = 'checkpoints/cfr_abstracted',
@@ -202,8 +202,8 @@ def plot_training_curves(utilities, info_set_counts, iteration_points, save_dir)
     
     # Plot utility distribution
     if len(utilities['p0']) > 1000:
-        axes[1, 0].hist(utilities['p0'][-10000:], bins=50, alpha=0.7, label='Player 0')
-        axes[1, 0].hist(utilities['p1'][-10000:], bins=50, alpha=0.7, label='Player 1')
+        axes[1, 0].hist(utilities['p0'][-50000:], bins=50, alpha=0.7, label='Player 0')
+        axes[1, 0].hist(utilities['p1'][-50000:], bins=50, alpha=0.7, label='Player 1')
         axes[1, 0].axvline(x=0, color='black', linestyle='--', alpha=0.3)
         axes[1, 0].set_xlabel('Utility (BB)')
         axes[1, 0].set_ylabel('Frequency')
@@ -227,7 +227,7 @@ def plot_training_curves(utilities, info_set_counts, iteration_points, save_dir)
     
     plt.tight_layout()
     
-    plot_path = os.path.join(save_dir, 'training_curves.png')
+    plot_path = os.path.join(save_dir, 'training_curves_50k.png')
     plt.savefig(plot_path, dpi=150)
     print(f"✅ Training curves saved to: {plot_path}")
     plt.close()
@@ -274,7 +274,7 @@ def main():
     
     # Quick test (10k iterations)
     # agent = train_abstracted_cfr(
-    #     n_iterations=10000,
+    #     n_iterations=50000,
     #     save_interval=5000,
     #     eval_interval=500,
     #     checkpoint_dir='checkpoints/cfr_abstracted_test',
@@ -283,9 +283,9 @@ def main():
     
     # Full training (100k iterations)
     agent = train_abstracted_cfr(
-        n_iterations=1000,
-        save_interval=100,
-        eval_interval=10,
+        n_iterations=50000,
+        save_interval=1000,
+        eval_interval=100,
         checkpoint_dir='checkpoints/cfr_abstracted',
         use_action_abstraction=True  # ENABLED: 5 actions instead of 9 for faster training
     )
