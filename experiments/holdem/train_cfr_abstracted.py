@@ -283,9 +283,9 @@ def main():
     
     # Full training (100k iterations)
     agent = train_abstracted_cfr(
-        n_iterations=50000,
-        save_interval=1000,
-        eval_interval=100,
+        n_iterations=500000,
+        save_interval=50000,
+        eval_interval=5000,
         checkpoint_dir='checkpoints/cfr_abstracted',
         use_action_abstraction=True  # ENABLED: 5 actions instead of 9 for faster training
     )
