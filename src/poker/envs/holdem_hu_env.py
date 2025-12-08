@@ -65,7 +65,9 @@ class HoldemHuEnv(gym.Env):
         self.pot = sb_post + bb_post
         
         # Betting state
-        self.street_investment = [sb_post, bb_post]  # Total put in this street
+        self.street_investment = [0.0, 0.0]
+        self.street_investment[self.sb_idx] = sb_post
+        self.street_investment[self.bb_idx] = bb_post
         self.has_acted = [False, False]  # Track who has acted
         
         # Preflop: SB acts first

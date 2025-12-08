@@ -344,6 +344,6 @@ class CFRAgent:
         with open(path, 'rb') as f:
             data = pickle.load(f)
         
-        self.regret_sum = defaultdict(lambda: np.zeros(9), data['regret_sum'])
-        self.strategy_sum = defaultdict(lambda: np.zeros(9), data['strategy_sum'])
+        self.regret_sum = defaultdict(lambda: np.zeros(self.num_actions), data['regret_sum'])
+        self.strategy_sum = defaultdict(lambda: np.zeros(self.num_actions), data['strategy_sum'])
         self.iterations = data['iterations']
