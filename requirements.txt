@@ -1,0 +1,10 @@
+numpy
+pandas
+matplotlib
+torch
+gymnasium
+termcolor
+tqdm
+flask
+flask-socketio
+ollama  # For LLM-powered recommendations in CFR GUI (local Llama models)
