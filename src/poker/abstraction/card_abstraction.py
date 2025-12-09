@@ -164,7 +164,7 @@ class CardAbstraction:
         if street == 'flop':
             # Use equity distribution + K-Means
             if self.flop_kmeans is not None:
-                equity_dist = self._calc_equity_distribution(hole_cards, board, n_bins=50, n_samples=200)
+                equity_dist = self._calc_equity_distribution(hole_cards, board, n_bins=50, n_samples=20)  # Reduced from 200 for speed
                 bucket_id = self.flop_kmeans.predict([equity_dist])[0]
             else:
                 # Fallback: simple equity bucketing
@@ -174,7 +174,7 @@ class CardAbstraction:
         elif street == 'turn':
             # Use equity distribution + K-Means
             if self.turn_kmeans is not None:
-                equity_dist = self._calc_equity_distribution(hole_cards, board, n_bins=50, n_samples=200)
+                equity_dist = self._calc_equity_distribution(hole_cards, board, n_bins=50, n_samples=20)  # Reduced from 200 for speed
                 bucket_id = self.turn_kmeans.predict([equity_dist])[0]
             else:
                 # Fallback: simple equity bucketing

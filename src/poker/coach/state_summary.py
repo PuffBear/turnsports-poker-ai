@@ -9,7 +9,7 @@ def summarize_state(env):
     pot = env.pot
     my_stack = env.stacks[player]
     opp_stack = env.stacks[1 - player]
-    to_call = abs(env.street_bets[0] - env.street_bets[1])
+    to_call = abs(env.street_investment[0] - env.street_investment[1])
     
     street_names = ['Preflop', 'Flop', 'Turn', 'River']
     street_name = street_names[env.street]

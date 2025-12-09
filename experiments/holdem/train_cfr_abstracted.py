@@ -67,6 +67,18 @@ def train_abstracted_cfr(
     # Initialize abstraction
     print("Initializing abstraction...")
     card_abstraction = CardAbstraction()
+    
+    # Load K-Means models if they exist
+    kmeans_flop_path = 'data/kmeans/kmeans_flop_latest.pkl'
+    kmeans_turn_path = 'data/kmeans/kmeans_turn_latest.pkl'
+    
+    if os.path.exists(kmeans_flop_path) and os.path.exists(kmeans_turn_path):
+        print("  Loading K-Means models...")
+        card_abstraction.load_kmeans_models(kmeans_flop_path, kmeans_turn_path)
+    else:
+        print("  ⚠️  K-Means models not found - using simple equity bucketing")
+        print("     Run scripts/generate_kmeans_clusters.py to generate proper abstractions")
+    
     print(f"  Preflop: {card_abstraction.preflop_clusters} buckets")
     print(f"  Flop: {card_abstraction.flop_clusters} buckets")
     print(f"  Turn: {card_abstraction.turn_clusters} buckets")

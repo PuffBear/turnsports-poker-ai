@@ -20,7 +20,7 @@ import sys
 import os
 
 # Add project root to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
 import random
@@ -29,8 +29,9 @@ from sklearn.cluster import KMeans
 import joblib
 from datetime import datetime
 
-from src.poker.core.card import Card, Deck
-from src.poker.core.hand_evaluator import HandEvaluator
+from src.poker.core.cards import Card
+from src.poker.core.deck import Deck
+from src.poker.core.hand_eval import HandEvaluator
 
 
 def calculate_equity_distribution(hole_cards, community_cards, n_bins=50, n_samples=200):

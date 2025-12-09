@@ -255,33 +255,32 @@ class CFRAgent:
     
     def _save_env_state(self, env):
         """Save minimal environment state needed for CFR."""
-        # Optimization: Use list slicing/comprehension instead of deepcopy
-        # Cards are immutable, so we only need to copy the lists
+        # Use [:] slicing for fastest list copy
         return {
-            'hands': [list(h) for h in env.hands],
-            'board': list(env.board),
-            'deck_cards': list(env.deck.cards),
+            'hands': [h[:] for h in env.hands],
+            'board': env.board[:],
+            'deck_cards': env.deck.cards[:],  # Need deck for runouts
             'pot': env.pot,
-            'stacks': list(env.stacks),
-            'street_investment': list(env.street_investment),
+            'stacks': env.stacks[:],
+            'street_investment': env.street_investment[:],
             'street': env.street,
             'current_player': env.current_player,
             'done': env.done,
-            'has_acted': list(env.has_acted)
+            'has_acted': env.has_acted[:]
         }
     
     def _restore_env_state(self, env, state):
         """Restore environment state."""
-        env.hands = [list(h) for h in state['hands']]
-        env.board = list(state['board'])
-        env.deck.cards = list(state['deck_cards'])
+        env.hands = [h[:] for h in state['hands']]
+        env.board = state['board'][:]
+        env.deck.cards = state['deck_cards'][:]  # Restore deck for runouts
         env.pot = state['pot']
-        env.stacks = list(state['stacks'])
-        env.street_investment = list(state['street_investment'])
+        env.stacks = state['stacks'][:]
+        env.street_investment = state['street_investment'][:]
         env.street = state['street']
         env.current_player = state['current_player']
         env.done = state['done']
-        env.has_acted = list(state['has_acted'])
+        env.has_acted = state['has_acted'][:]
     
     def _get_info_set(self, env, player):
         """

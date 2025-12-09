@@ -1,4 +1,3 @@
-
 import sys
 import os
 import tkinter as tk
@@ -12,19 +11,29 @@ from src.poker.envs.holdem_hu_env import HoldemHuEnv
 from src.poker.agents.cfr_agent import CFRAgent
 from src.poker.abstraction.card_abstraction import CardAbstraction
 from src.poker.abstraction.action_abstraction import ActionAbstraction
+from src.poker.coach.llm_coach import LLMCoach
 
 class CFRPokerGUI:
     def __init__(self, root, checkpoint_path=None):
         self.root = root
         self.root.title("Heads-Up No-Limit Hold'em: You vs CFR Bot")
-        self.root.geometry("1200x800")
+        self.root.geometry("1600x900")  # Wider for recommendation window
         
         # Initialize environment
         self.env = HoldemHuEnv(stack_size=100.0, blinds=(0.5, 1.0))
         
         # Initialize abstractions
         self.card_abstraction = CardAbstraction()
-        # Note: We are using the default simple equity bucketing for now as we don't have K-Means paths
+        
+        # Load K-Means models for proper abstraction
+        kmeans_flop_path = 'data/kmeans/kmeans_flop_latest.pkl'
+        kmeans_turn_path = 'data/kmeans/kmeans_turn_latest.pkl'
+        if os.path.exists(kmeans_flop_path) and os.path.exists(kmeans_turn_path):
+            print("Loading K-Means models for card abstraction...")
+            self.card_abstraction.load_kmeans_models(kmeans_flop_path, kmeans_turn_path)
+            print("✅ K-Means models loaded!")
+        else:
+            print("⚠️  K-Means models not found - using hash bucketing")
         
         self.action_abstraction = ActionAbstraction()
         
@@ -50,6 +59,35 @@ class CFRPokerGUI:
         self.human_idx = 0
         self.bot_idx = 1
         
+        # Session statistics
+        self.session_stats = {
+            'hands_played': 0,
+            'player_total_bb': 0.0,
+            'bot_total_bb': 0.0
+        }
+        
+        # Initialize LLM Coach (standalone - no CFR bot dependency)
+        try:
+            bot_policy = None  # Coach uses equity/pot odds only
+            self.llm_coach = LLMCoach(bot_policy=bot_policy, risk_tolerance='moderate')
+            print("✅ LLM Coach initialized (standalone mode)")
+        except Exception as e:
+            print(f"⚠️  Could not initialize LLM coach: {e}")
+            print("Continuing without coach recommendations.")
+            self.llm_coach = None
+        
+        # Opponent modeling stats
+        self.opponent_stats = {
+            'hands_played': 0,
+            'preflop_raises': 0,
+            'preflop_calls': 0,
+            'preflop_folds': 0,
+            'postflop_bets': 0,
+            'postflop_folds_to_bet': 0,
+            'showdowns': 0,
+            'showdown_wins': 0
+        }
+        
         # Setup UI
         self.setup_ui()
         
@@ -58,12 +96,19 @@ class CFRPokerGUI:
     
     def setup_ui(self):
         """Create the GUI layout."""
-        # Main container
+        # Main container - split into game and recommendation panels
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
+        # Game panel (left side)
+        game_panel = ttk.Frame(main_frame, padding="5")
+        game_panel.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Recommendation panel (right side)
+        self.setup_recommendation_panel(main_frame)
+        
         # Game Info Frame
-        info_frame = ttk.LabelFrame(main_frame, text="Game Info", padding="10")
+        info_frame = ttk.LabelFrame(game_panel, text="Game Info", padding="10")
         info_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
         
         # Board
@@ -82,7 +127,7 @@ class CFRPokerGUI:
         self.street_label.grid(row=0, column=5, sticky=tk.W, padx=10)
 
         # Player Frame
-        player_frame = ttk.LabelFrame(main_frame, text="You (Hero)", padding="10")
+        player_frame = ttk.LabelFrame(game_panel, text="You (Hero)", padding="10")
         player_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5, padx=(0, 5))
         
         ttk.Label(player_frame, text="Hand:", font=("Arial", 12)).grid(row=0, column=0, sticky=tk.W)
@@ -98,7 +143,7 @@ class CFRPokerGUI:
         self.player_role_label.grid(row=2, column=1, sticky=tk.W, padx=10)
 
         # Bot Frame
-        bot_frame = ttk.LabelFrame(main_frame, text="Bot (Villain)", padding="10")
+        bot_frame = ttk.LabelFrame(game_panel, text="Bot (CFR Agent)", padding="10")
         bot_frame.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5, padx=(5, 0))
         
         ttk.Label(bot_frame, text="Hand:", font=("Arial", 12)).grid(row=0, column=0, sticky=tk.W)
@@ -114,14 +159,14 @@ class CFRPokerGUI:
         self.bot_role_label.grid(row=2, column=1, sticky=tk.W, padx=10)
 
         # Action History
-        hist_frame = ttk.LabelFrame(main_frame, text="Action History", padding="10")
+        hist_frame = ttk.LabelFrame(game_panel, text="Action History", padding="10")
         hist_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         
         self.history_text = scrolledtext.ScrolledText(hist_frame, width=60, height=10, font=("Courier", 10))
         self.history_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # Controls
-        control_frame = ttk.Frame(main_frame, padding="10")
+        control_frame = ttk.Frame(game_panel, padding="10")
         control_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
         
         self.action_buttons = {}
@@ -137,19 +182,160 @@ class CFRPokerGUI:
             self.action_buttons[aid] = btn
             
         # New Hand Button
-        ttk.Button(main_frame, text="New Hand", command=self.new_hand).grid(row=4, column=0, columnspan=2, pady=10)
+        ttk.Button(game_panel, text="New Hand", command=self.new_hand).grid(row=4, column=0, columnspan=2, pady=10)
+        
+        # Session Statistics Frame
+        stats_frame = ttk.LabelFrame(game_panel, text="Session Statistics", padding="10")
+        stats_frame.grid(row=5, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        # Stats table
+        ttk.Label(stats_frame, text="Player", font=("Arial", 10, "bold")).grid(row=0, column=0, padx=10)
+        ttk.Label(stats_frame, text="Total BB Won/Lost", font=("Arial", 10, "bold")).grid(row=0, column=1, padx=10)
+        
+        ttk.Label(stats_frame, text="You:", font=("Arial", 10)).grid(row=1, column=0, sticky=tk.W, padx=10)
+        self.player_total_label = ttk.Label(stats_frame, text="0.0 BB", font=("Arial", 10, "bold"), foreground="blue")
+        self.player_total_label.grid(row=1, column=1, sticky=tk.W, padx=10)
+        
+        ttk.Label(stats_frame, text="Bot:", font=("Arial", 10)).grid(row=2, column=0, sticky=tk.W, padx=10)
+        self.bot_total_label = ttk.Label(stats_frame, text="0.0 BB", font=("Arial", 10, "bold"), foreground="red")
+        self.bot_total_label.grid(row=2, column=1, sticky=tk.W, padx=10)
+        
+        ttk.Separator(stats_frame, orient='vertical').grid(row=0, column=2, rowspan=3, sticky=(tk.N, tk.S), padx=20)
+        
+        ttk.Label(stats_frame, text="Hands Played:", font=("Arial", 10)).grid(row=1, column=3, sticky=tk.W, padx=10)
+        self.hands_played_label = ttk.Label(stats_frame, text="0", font=("Arial", 10, "bold"))
+        self.hands_played_label.grid(row=1, column=4, sticky=tk.W, padx=10)
         
         # Weights
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
+        main_frame.columnconfigure(0, weight=2)  # Game panel gets 2/3
+        main_frame.columnconfigure(1, weight=1)  # Recommendation panel gets 1/3
+        game_panel.columnconfigure(0, weight=1)
+        game_panel.columnconfigure(1, weight=1)
 
+    def setup_recommendation_panel(self, parent):
+        """Create the LLM recommendation panel."""
+        rec_frame = ttk.LabelFrame(parent, text="AI Coach Recommendations", padding="10")
+        rec_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(10, 0))
+        
+        # Risk tolerance selector
+        risk_frame = ttk.Frame(rec_frame)
+        risk_frame.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(risk_frame, text="Risk Tolerance:", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(0, 5))
+        self.risk_var = tk.StringVar(value="moderate")
+        for risk in ["conservative", "moderate", "aggressive"]:
+            rb = ttk.Radiobutton(risk_frame, text=risk.capitalize(), variable=self.risk_var, 
+                                value=risk, command=self.on_risk_change)
+            rb.pack(side=tk.LEFT, padx=5)
+        
+        # Stats display
+        stats_frame = ttk.LabelFrame(rec_frame, text="Statistics", padding="5")
+        stats_frame.pack(fill=tk.BOTH, expand=False, pady=(0, 10))
+        
+        self.stats_text = tk.Text(stats_frame, height=8, width=35, font=("Courier", 9), wrap=tk.WORD)
+        self.stats_text.pack(fill=tk.BOTH, expand=True)
+        stats_scroll = ttk.Scrollbar(stats_frame, orient=tk.VERTICAL, command=self.stats_text.yview)
+        self.stats_text.config(yscrollcommand=stats_scroll.set)
+        
+        # Recommendation display
+        rec_display_frame = ttk.LabelFrame(rec_frame, text="Recommendation", padding="5")
+        rec_display_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.rec_text = scrolledtext.ScrolledText(rec_display_frame, height=15, width=35, 
+                                                   font=("Arial", 10), wrap=tk.WORD)
+        self.rec_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Risk analysis display
+        risk_analysis_frame = ttk.LabelFrame(rec_frame, text="All Risk Levels", padding="5")
+        risk_analysis_frame.pack(fill=tk.BOTH, expand=False, pady=(10, 0))
+        
+        self.risk_analysis_text = tk.Text(risk_analysis_frame, height=6, width=35, 
+                                         font=("Courier", 9), wrap=tk.WORD)
+        self.risk_analysis_text.pack(fill=tk.BOTH, expand=True)
+    
+    def on_risk_change(self):
+        """Handle risk tolerance change."""
+        if self.llm_coach:
+            self.llm_coach.set_risk_tolerance(self.risk_var.get())
+            self.update_recommendations()
+    
+    def update_recommendations(self):
+        """Update the recommendation panel with current analysis."""
+        if not self.llm_coach or self.env.done or self.env.current_player != self.human_idx:
+            # Clear or show "Not your turn" message
+            if self.env.done:
+                self.stats_text.delete(1.0, tk.END)
+                self.rec_text.delete(1.0, tk.END)
+                self.risk_analysis_text.delete(1.0, tk.END)
+            return
+        
+        try:
+            # Get recommendation with increased equity accuracy
+            rec = self.llm_coach.get_recommendation(self.env, n_rollouts=100, n_equity_samples=5000)
+            stats = rec.get('stats', {})
+            
+            # Update stats display
+            self.stats_text.delete(1.0, tk.END)
+            stats_lines = [
+                f"Pot: {stats.get('pot', 0):.1f} BB",
+                f"To Call: {stats.get('to_call', 0):.1f} BB",
+                f"Your Stack: {stats.get('my_stack', 0):.1f} BB",
+                f"Opp Stack: {stats.get('opp_stack', 0):.1f} BB",
+                f"Street: {stats.get('street', 'Unknown')}",
+                f"Position: {stats.get('position', 'Unknown')}",
+                f"SPR: {stats.get('spr', 0):.2f}",
+            ]
+            
+            if stats.get('equity') is not None:
+                stats_lines.append(f"Equity: {stats['equity']:.1f}%")
+                stats_lines.append(f"Pot Odds: {stats.get('pot_odds', 0):.1f}%")
+                stats_lines.append(f"Required: {stats.get('required_equity', 0):.1f}%")
+                edge = stats['equity'] - stats.get('required_equity', 0)
+                if edge > 0:
+                    stats_lines.append(f"Edge: +{edge:.1f}%")
+                else:
+                    stats_lines.append(f"Deficit: {edge:.1f}%")
+            
+            if stats.get('rollout_evs'):
+                stats_lines.append("\nRollout EVs:")
+                for action_id, ev in sorted(stats['rollout_evs'].items(), key=lambda x: x[1], reverse=True):
+                    action_name = self.action_buttons[action_id].cget("text") if action_id in self.action_buttons else f"Action {action_id}"
+                    stats_lines.append(f"  {action_name}: {ev:+.2f} BB")
+            
+            self.stats_text.insert(1.0, "\n".join(stats_lines))
+            
+            # Update recommendation display
+            self.rec_text.delete(1.0, tk.END)
+            rec_lines = [
+                f"Recommended: {rec.get('action_name', 'Unknown')}",
+                "",
+                rec.get('explanation', 'No explanation available.')
+            ]
+            self.rec_text.insert(1.0, "\n".join(rec_lines))
+            
+            # Update risk analysis
+            self.risk_analysis_text.delete(1.0, tk.END)
+            risk_analysis = rec.get('risk_analysis', {})
+            if risk_analysis:
+                risk_lines = []
+                for risk_level in ['conservative', 'moderate', 'aggressive']:
+                    if risk_level in risk_analysis:
+                        analysis = risk_analysis[risk_level]
+                        risk_lines.append(f"{risk_level.capitalize()}: {analysis.get('action_name', 'Unknown')}")
+                        risk_lines.append(f"  {analysis.get('reasoning', '')}")
+                        risk_lines.append("")
+                self.risk_analysis_text.insert(1.0, "\n".join(risk_lines))
+        except Exception as e:
+            self.rec_text.delete(1.0, tk.END)
+            self.rec_text.insert(1.0, f"Error getting recommendation: {e}")
+    
     def new_hand(self):
         self.env.reset()
         self.history_text.delete(1.0, tk.END)
         self.history_text.insert(tk.END, "New Hand Started\n")
         self.update_display()
+        self.update_recommendations()
         
         # If bot acts first
         if self.env.current_player == self.bot_idx:
@@ -194,6 +380,8 @@ class CFRPokerGUI:
                     btn.state(["!disabled"])
                 else:
                     btn.state(["disabled"])
+            # Update recommendations when it's player's turn
+            self.update_recommendations()
         else:
             for btn in self.action_buttons.values():
                 btn.state(["disabled"])
@@ -208,6 +396,7 @@ class CFRPokerGUI:
         
         self.env.step(action_id)
         self.update_display()
+        self.update_recommendations()
         
         if not self.env.done:
             self.root.after(500, self.bot_action)
@@ -231,18 +420,20 @@ class CFRPokerGUI:
         avg_strat = self.agent.get_average_strategy(info_set, legal_actions)
         
         # Sample from average strategy
-        # avg_strat is over abstract actions (5)
-        # We need to map back to env actions
-        
-        # The agent class doesn't have a helper to sample from avg_strat and map back easily exposed?
-        # Let's look at CFRAgent.get_action again. It calls get_strategy.
-        # I can monkey-patch or just implement the sampling here.
-        
-        # Actually, CFRAgent.get_action uses self.get_strategy.
-        # I can just use that if I trust the current strategy (which converges to avg in some variants, but avg is better).
-        # Let's manually do what get_action does but with avg_strat.
-        
-        abstract_action = np.random.choice(self.agent.num_actions, p=avg_strat)
+        # avg_strat is a numpy array of size num_actions (5 for abstracted)
+        # np.random.choice needs the array size and probability distribution
+        if len(avg_strat) == 0:
+            # Fallback: use uniform random if empty
+            abstract_action = np.random.randint(0, self.agent.num_actions)
+        else:
+            # Normalize probabilities to ensure they sum to 1
+            prob_sum = np.sum(avg_strat)
+            if prob_sum > 0:
+                avg_strat = avg_strat / prob_sum
+            else:
+                # Uniform if all zeros
+                avg_strat = np.ones(len(avg_strat)) / len(avg_strat)
+            abstract_action = np.random.choice(len(avg_strat), p=avg_strat)
         
         # Map back
         # 0->0 (fold), 1->1 (call), 2->4 (1/3 pot), 3->6 (3/4 pot), 4->7 (pot)
@@ -274,6 +465,7 @@ class CFRPokerGUI:
         
         self.env.step(env_action)
         self.update_display()
+        self.update_recommendations()
         
         if not self.env.done:
             # If it's still bot's turn (e.g. after raise?), loop
@@ -293,14 +485,42 @@ class CFRPokerGUI:
             
         self.history_text.insert(tk.END, f"\n--- {res} ---\n")
         self.history_text.see(tk.END)
+        
+        # Update session statistics
+        self.session_stats['hands_played'] += 1
+        self.session_stats['player_total_bb'] += rewards[self.human_idx]
+        self.session_stats['bot_total_bb'] += rewards[self.bot_idx]
+        
+        # Update stats display
+        player_total = self.session_stats['player_total_bb']
+        bot_total = self.session_stats['bot_total_bb']
+        
+        player_color = "green" if player_total > 0 else "red" if player_total < 0 else "blue"
+        bot_color = "green" if bot_total > 0 else "red" if bot_total < 0 else "gray"
+        
+        self.player_total_label.config(
+            text=f"{player_total:+.1f} BB",
+            foreground=player_color
+        )
+        self.bot_total_label.config(
+            text=f"{bot_total:+.1f} BB",
+            foreground=bot_color
+        )
+        self.hands_played_label.config(text=str(self.session_stats['hands_played']))
+        
         self.update_display()
+        self.update_recommendations()
 
 def main():
     root = tk.Tk()
-    # Path to your checkpoint
-    ckpt_path = os.path.join(os.path.dirname(__file__), '../checkpoints/cfr_abstracted/cfr_abstracted_300000.pkl')
+    # Path to your K-Means trained checkpoint
+    ckpt_path = os.path.join(os.path.dirname(__file__), '../checkpoints/cfr_kmeans/cfr_abstracted_final.pkl')
+    # Fallback to older checkpoint if new one doesn't exist
+    """if not os.path.exists(ckpt_path):
+        ckpt_path = os.path.join(os.path.dirname(__file__), '../checkpoints/cfr_abstracted/cfr_abstracted_final.pkl')"""
     app = CFRPokerGUI(root, checkpoint_path=ckpt_path)
     root.mainloop()
 
 if __name__ == "__main__":
     main()
+
